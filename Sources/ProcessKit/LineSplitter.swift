@@ -1,9 +1,15 @@
 import Foundation
 
 /// Splits bytes into lines as they arrive. A line ends at \n, \r\n or a lone \r (the progress
-/// lines of curl and FFmpeg), and a \r\n split across two reads still counts once.
+/// lines of curl and FFmpeg), and a \r\n split across two reads still counts once. With
+/// `.newline`, a lone \r stays in the line.
 struct LineSplitter {
     private var buffer = Data()
+    private let splitsAtCarriageReturn: Bool
+
+    init(breaks: Shell.LineBreaks = .any) {
+        splitsAtCarriageReturn = breaks == .any
+    }
 
     mutating func feed(_ data: Data) -> [String] {
         buffer.append(data)
@@ -19,10 +25,12 @@ struct LineSplitter {
                 let next = buffer.index(after: index)
                 // A \r at the very end may be the first half of \r\n: wait for the next read.
                 if next == buffer.endIndex { break }
-                lines.append(String(decoding: buffer[start..<index], as: UTF8.self))
-                start = buffer[next] == 0x0A ? buffer.index(after: next) : next
-                index = start
-                continue
+                if buffer[next] == 0x0A || splitsAtCarriageReturn {
+                    lines.append(String(decoding: buffer[start..<index], as: UTF8.self))
+                    start = buffer[next] == 0x0A ? buffer.index(after: next) : next
+                    index = start
+                    continue
+                }
             }
             index = buffer.index(after: index)
         }

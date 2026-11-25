@@ -21,7 +21,8 @@ public enum Shell {
 
     /// Runs `tool` (a full path, or a bare name looked up in PATH and `standardFolders`) and waits for it
     /// without blocking a thread of Swift's. Returns whatever the exit status; `check()` throws on failure.
-    /// Cancelling the task stops the command and throws `CancellationError`.
+    /// Cancelling the task stops the command and throws `CancellationError` (or returns its output with
+    /// `returnsOutputWhenCancelled`).
     /// - Parameters:
     ///   - directory: the folder it starts in.
     ///   - environment: variables added to the app's environment.
@@ -80,6 +81,8 @@ public enum Shell {
             let stop = CancelFlag()
             continuation.onTermination = { _ in stop.cancel() }
             var streaming = options
+            // A stop ends the stream; it never fails it.
+            streaming.returnsOutputWhenCancelled = false
             let caller = options.onLine
             streaming.onLine = { line in
                 caller?(line)

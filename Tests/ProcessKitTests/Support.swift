@@ -1,4 +1,14 @@
 import Foundation
+import os
+
+/// A value tests share with a callback on another thread.
+final class OSAllocatedUnfairLockBox<Value: Sendable>: Sendable {
+    private let lock: OSAllocatedUnfairLock<Value>
+    init(_ value: Value) { lock = OSAllocatedUnfairLock(initialState: value) }
+    func get() -> Value { lock.withLock { $0 } }
+    func set(_ value: Value) { lock.withLock { $0 = value } }
+    func update(_ change: @Sendable (inout Value) -> Void) { lock.withLock { change(&$0) } }
+}
 
 /// A new empty folder under the temporary directory, removed by the caller's `defer`.
 func temporaryFolder() throws -> URL {

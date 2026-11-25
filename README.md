@@ -82,10 +82,60 @@ options.outputLimit = 8 << 20         // stdout past it: stopped, output.truncat
 options.cancel = flag                 // a Shell.CancelFlag, for code without a task to cancel
 options.disclaimsResponsibility = true
 options.onLine = { line in progress.read(line) }  // stdout lines as they come, on the command's thread
+options.lineBreaks = .newline         // .any (default) or .newline: a lone \r stays in the line
+options.returnsOutputWhenCancelled = true  // a cancel returns the output (cancelled, signal) instead of throwing
+options.readsBackStderr = true        // with stderr .file(url): the file's end comes back in output.stderr
 let output = try await Shell.run("/usr/local/bin/ffmpeg", arguments, options: options)
 ```
 
-Lines end at `\n`, `\r\n` or a lone `\r` (FFmpeg's and curl's progress lines), without the ending.
+Lines end at `\n`, `\r\n` or a lone `\r` (FFmpeg's and curl's progress lines), without the ending. With
+`lineBreaks = .newline` they end only at `\n` or `\r\n`, for output whose `\r` belongs inside a line (Docker's
+pull progress, brew's). `output.lines(breaks: .newline)` splits a finished output the same way.
+
+### Keep the output of a stopped command
+
+```swift
+let options = Shell.Options(stdout: .file(log), stderr: .merged, returnsOutputWhenCancelled: true)
+let output = try await Shell.run(engine, arguments, options: options)
+if output.cancelled { /* stopped: output.signal is SIGTERM, or SIGKILL after the grace period */ }
+```
+
+`output.cancelled` and `output.timedOut` say how a run was stopped; `ShellError.timedOut` still throws.
+
+### Errors of `ssh -f`
+
+A program left running in the background keeps stderr's pipe open, so its errors go to a file. With
+`readsBackStderr`, that file's end (64 KB at most) is read back into the output, so `message` and
+`ShellError.failed` carry ssh's own words:
+
+```swift
+let errors = FileManager.default.temporaryDirectory.appending(path: "ssh-\(UUID().uuidString).txt")
+defer { try? FileManager.default.removeItem(at: errors) }
+let options = Shell.Options(stdout: .discard, stderr: .file(errors), readsBackStderr: true)
+try await Shell.run("/usr/bin/ssh", ["-f", "-N", host], options: options).check()
+```
+
+## Start a game, an emulator, a long tool
+
+`Shell.start` returns at once with a handle, for a program that runs on its own and is watched rather than
+awaited:
+
+```swift
+let game = try Shell.start(engine.path, arguments,
+                           options: Shell.Options(directory: folder, stdout: .file(log), stderr: .merged)) { output in
+    // On the command's thread when it ends: output.status, output.signal, output.cancelled.
+    Task { @MainActor in model.gameEnded(output) }
+}
+game.pid            // its process id and process group
+game.isRunning
+game.stop()         // stdin closed, SIGTERM to the group, SIGKILL after the grace period; output.cancelled
+game.closeInput()   // an .open stdin reads end of file; the command keeps running
+let output = await game.wait()   // or game.waitSync() off the main thread; game.output once it ended
+```
+
+It throws `ShellError.notFound` or `.couldNotStart` when the program can't start. A timeout ends it with
+`output.timedOut` rather than a throw. Letting go of the handle doesn't stop the command: it is still reaped and
+`onEnd` still called. `onLine` works as with `run`, for an emulator's messages.
 
 ## Follow a long command
 

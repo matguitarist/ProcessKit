@@ -16,8 +16,14 @@ extension Shell {
         public let stderr: Data
         /// True when stdout passed `outputLimit` and the command was stopped: `stdout` holds the first bytes.
         public let truncated: Bool
+        /// True when the command was stopped by a cancel (`returnsOutputWhenCancelled`, or
+        /// `RunningCommand.stop()`): `signal` says how it ended.
+        public let cancelled: Bool
+        /// True when the command ran past its timeout and was stopped.
+        public let timedOut: Bool
 
-        public init(tool: String, arguments: [String], status: Int32, signal: Int32?, stdout: Data, stderr: Data, truncated: Bool) {
+        public init(tool: String, arguments: [String], status: Int32, signal: Int32?, stdout: Data, stderr: Data, truncated: Bool,
+                    cancelled: Bool = false, timedOut: Bool = false) {
             self.tool = tool
             self.arguments = arguments
             self.status = status
@@ -25,6 +31,8 @@ extension Shell {
             self.stdout = stdout
             self.stderr = stderr
             self.truncated = truncated
+            self.cancelled = cancelled
+            self.timedOut = timedOut
         }
 
         /// stdout as UTF-8 text (bytes that aren't UTF-8 become U+FFFD).
@@ -32,8 +40,10 @@ extension Shell {
         /// stderr as UTF-8 text.
         public var errorText: String { String(decoding: stderr, as: UTF8.self) }
         /// stdout split into lines, without their endings or a last empty line.
-        public var lines: [String] {
-            var splitter = LineSplitter()
+        public var lines: [String] { lines(breaks: .any) }
+        /// stdout split into lines at the given breaks.
+        public func lines(breaks: LineBreaks) -> [String] {
+            var splitter = LineSplitter(breaks: breaks)
             return splitter.feed(stdout) + (splitter.finish().map { [$0] } ?? [])
         }
         /// Exit status 0.

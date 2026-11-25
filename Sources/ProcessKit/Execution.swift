@@ -11,6 +11,8 @@ struct Execution {
     let stop: Shell.CancelFlag
     /// False for `lines`: stdout goes to `onLine` only.
     var keepsStdout = true
+    /// Set for `Shell.start`: told when the command has ended, asked whether to close stdin.
+    var monitor: Shell.Monitor?
 
     /// How long the pipes may stay open once the command has ended: a program it left running in the
     /// background (ssh -f, a daemon) can hold them open forever.
@@ -18,9 +20,29 @@ struct Execution {
     /// The most stderr kept when stdout isn't (`lines`), enough for an error message.
     static let stderrTail = 64 * 1024
 
-    private enum Stop { case cancelled, timedOut, outputLimit }
+    enum Stop { case cancelled, timedOut, outputLimit }
 
+    /// A started command: its id and the parent's ends of its pipes.
+    struct Spawned {
+        let pid: pid_t
+        let path: String
+        fileprivate let fds: Descriptors
+        let pendingInput: Data
+    }
+
+    /// Starts the command and waits for it: the output, or `CancellationError` (unless
+    /// `returnsOutputWhenCancelled`) or `ShellError.timedOut`.
     func run() throws -> Shell.Output {
+        let (output, stopReason) = watch(try spawn())
+        switch stopReason {
+        case .cancelled where !options.returnsOutputWhenCancelled: throw CancellationError()
+        case .timedOut: throw ShellError.timedOut(output)
+        case .cancelled, .outputLimit, nil: return output
+        }
+    }
+
+    /// posix_spawn with the pipes and attributes the options ask for. Throws before anything runs.
+    func spawn() throws -> Spawned {
         let environment = makeEnvironment()
         guard let url = Shell.locate(tool, path: environment["PATH"]) else { throw ShellError.notFound(tool) }
         let path = url.path
@@ -29,7 +51,8 @@ struct Execution {
         // MARK: Pipes and file actions
 
         var fds = Descriptors()
-        defer { fds.closeAll() }
+        var started = false
+        defer { if !started { fds.closeAll() } }
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
@@ -111,13 +134,17 @@ struct Execution {
         // The child has its own copies; ours must close, or reads never see end of file.
         fds.closeChildEnds()
         guard result == 0 else { throw ShellError.couldNotStart(path, code: result) }
-
-        return try watch(pid: pid, path: path, fds: &fds, pendingInput: pendingInput)
+        started = true
+        return Spawned(pid: pid, path: path, fds: fds, pendingInput: pendingInput)
     }
 
     // MARK: The loop
 
-    private func watch(pid: pid_t, path: String, fds: inout Descriptors, pendingInput: Data) throws -> Shell.Output {
+    /// Watches a spawned command to its end, on the calling thread, and closes its pipes.
+    func watch(_ spawned: Spawned) -> (Shell.Output, Stop?) {
+        let pid = spawned.pid, path = spawned.path, pendingInput = spawned.pendingInput
+        var fds = spawned.fds
+        defer { fds.closeAll() }
         let clock = ContinuousClock()
         let deadline = options.timeout.map { clock.now + $0 }
         var input = pendingInput
@@ -127,7 +154,7 @@ struct Execution {
         var stdout = Data()
         var stderr = Data()
         var truncated = false
-        var splitter = LineSplitter()
+        var splitter = LineSplitter(breaks: options.lineBreaks)
         var status: Int32?
         var exitedAt: ContinuousClock.Instant?
         var stopReason: Stop?
@@ -181,6 +208,13 @@ struct Execution {
             killAt = clock.now + options.gracePeriod
         }
 
+        func closeInputIfAsked() {
+            guard monitor?.takeInputCloseRequest() == true else { return }
+            fds.closeInput()
+            input = Data()
+            inputOffset = 0
+        }
+
         while true {
             // Reap without blocking.
             if status == nil {
@@ -189,13 +223,16 @@ struct Execution {
                 if reaped == pid {
                     status = raw
                     exitedAt = clock.now
+                    monitor?.markExited()
                     // Whatever a stopped command left running goes with it.
                     if stopReason != nil { kill(-pid, SIGKILL) }
                 } else if reaped == -1, errno != EINTR {
                     status = 0
                     exitedAt = clock.now
+                    monitor?.markExited()
                 }
             }
+            closeInputIfAsked()
             if status != nil, !fds.hasOutput { break }
             if let exitedAt, clock.now - exitedAt > Self.drainTime {
                 fds.closeOutputs()
@@ -262,6 +299,7 @@ struct Execution {
             let reaped = waitpid(pid, &raw, WNOHANG)
             if reaped == pid || (reaped == -1 && errno != EINTR) {
                 status = reaped == pid ? raw : 0
+                monitor?.markExited()
                 break
             }
             usleep(useconds_t(napMilliseconds) * 1000)
@@ -269,19 +307,27 @@ struct Execution {
         }
         if let onLine = options.onLine, let last = splitter.finish() { onLine(last) }
 
+        if options.readsBackStderr, case .file(let file) = options.stderr, let handle = try? FileHandle(forReadingFrom: file) {
+            // The end of the file, enough for an error message.
+            if let size = try? handle.seekToEnd(), size > UInt64(Self.stderrTail) {
+                try? handle.seek(toOffset: size - UInt64(Self.stderrTail))
+            } else {
+                try? handle.seek(toOffset: 0)
+            }
+            stderr = (try? handle.readToEnd()) ?? Data()
+            try? handle.close()
+        }
+
         let raw = status ?? 0
         let signal = raw & 0x7F
         let output = Shell.Output(
             tool: path, arguments: arguments,
             status: signal == 0 ? (raw >> 8) & 0xFF : 128 + signal,
             signal: signal == 0 ? nil : signal,
-            stdout: stdout, stderr: stderr, truncated: truncated
+            stdout: stdout, stderr: stderr, truncated: truncated,
+            cancelled: stopReason == .cancelled, timedOut: stopReason == .timedOut
         )
-        switch stopReason {
-        case .cancelled: throw CancellationError()
-        case .timedOut: throw ShellError.timedOut(output)
-        case .outputLimit, nil: return output
-        }
+        return (output, stopReason)
     }
 
     // MARK: Environment
@@ -294,7 +340,7 @@ struct Execution {
 }
 
 /// The parent's ends of the pipes, closed once each.
-private struct Descriptors {
+fileprivate struct Descriptors {
     var input: Int32?
     var stdout: Int32?
     var stderr: Int32?

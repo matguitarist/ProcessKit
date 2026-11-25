@@ -12,11 +12,12 @@ Shared rules for how every project is laid out and named:
 
 - `Sources/ProcessKit/` Foundation and Darwin only, macOS only:
   - `Shell.swift`: `run`, `runSync`, `lines`, `locate`, `standardFolders`, `standardPATH`.
-  - `Options.swift`: `Shell.Options`, `Input`, `Destination`, `CancelFlag`.
+  - `RunningCommand.swift`: `start` and its handle (`pid`, `isRunning`, `stop`, `closeInput`, `wait`, `onEnd`).
+  - `Options.swift`: `Shell.Options`, `Input`, `Destination`, `LineBreaks`, `CancelFlag`.
   - `Output.swift`: `Shell.Output` and `ShellError`.
   - `Execution.swift`: posix_spawn and the one poll() loop that reads, writes, and watches the end, the
     timeout and a stop.
-  - `LineSplitter.swift`: lines at \n, \r\n and a lone \r.
+  - `LineSplitter.swift`: lines at \n, \r\n and a lone \r (or \n and \r\n only).
 - `Tests/ProcessKitTests/` Swift Testing, with real commands (/bin/sh, cat, yes, head).
 
 ## Rules

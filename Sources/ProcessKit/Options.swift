@@ -29,6 +29,16 @@ extension Shell {
         /// Called with each line of stdout as it comes (and of stderr when it is `.merged`), on a thread of
         /// the command's own. Lines end at \n, \r\n or a lone \r (progress lines); the ending is left out.
         public var onLine: (@Sendable (String) -> Void)?
+        /// Where `onLine` and `Shell.lines` end a line: `.any` (\n, \r\n or a lone \r) or `.newline`
+        /// (\n or \r\n only, for output whose \r belongs inside a line, like Docker's or brew's progress).
+        public var lineBreaks: LineBreaks
+        /// Cancelling the task (or `cancel`) still stops the command, but `run` and `runSync` return its
+        /// output, with `cancelled` set and the signal that ended it, instead of throwing `CancellationError`.
+        public var returnsOutputWhenCancelled: Bool
+        /// With stderr `.file(url)`: once the command ends, the end of that file (64 KB at most) is read back
+        /// into `Output.stderr`, so `message` and `ShellError.failed` carry it. For `ssh -f`, whose
+        /// background master keeps a pipe open.
+        public var readsBackStderr: Bool
 
         public init(
             directory: URL? = nil,
@@ -42,7 +52,10 @@ extension Shell {
             outputLimit: Int? = nil,
             cancel: CancelFlag? = nil,
             disclaimsResponsibility: Bool = false,
-            onLine: (@Sendable (String) -> Void)? = nil
+            onLine: (@Sendable (String) -> Void)? = nil,
+            lineBreaks: LineBreaks = .any,
+            returnsOutputWhenCancelled: Bool = false,
+            readsBackStderr: Bool = false
         ) {
             self.directory = directory
             self.environment = environment
@@ -56,7 +69,18 @@ extension Shell {
             self.cancel = cancel
             self.disclaimsResponsibility = disclaimsResponsibility
             self.onLine = onLine
+            self.lineBreaks = lineBreaks
+            self.returnsOutputWhenCancelled = returnsOutputWhenCancelled
+            self.readsBackStderr = readsBackStderr
         }
+    }
+
+    /// Where a line of output ends.
+    public enum LineBreaks: Sendable, Equatable {
+        /// \n, \r\n or a lone \r (FFmpeg's and curl's progress lines each become a line).
+        case any
+        /// \n or \r\n only: a lone \r stays in the line's text.
+        case newline
     }
 
     /// What the command reads.
