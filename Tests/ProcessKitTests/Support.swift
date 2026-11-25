@@ -1,0 +1,22 @@
+import Foundation
+
+/// A new empty folder under the temporary directory, removed by the caller's `defer`.
+func temporaryFolder() throws -> URL {
+    let url = FileManager.default.temporaryDirectory.appending(path: "ProcessKitTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    // The real path (/private/var/…), as `pwd -P` gives it.
+    return URL(fileURLWithPath: realpath(url.path, nil).map { defer { free($0) }; return String(cString: $0) } ?? url.path, isDirectory: true)
+}
+
+/// Whether a process with this id is still there.
+func isAlive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 || errno == EPERM }
+
+/// Waits up to `seconds` for `condition`.
+func eventually(_ seconds: Double = 5, _ condition: () -> Bool) async -> Bool {
+    let end = Date().addingTimeInterval(seconds)
+    while Date() < end {
+        if condition() { return true }
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    return condition()
+}
