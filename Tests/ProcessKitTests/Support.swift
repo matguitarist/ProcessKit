@@ -5,7 +5,10 @@ func temporaryFolder() throws -> URL {
     let url = FileManager.default.temporaryDirectory.appending(path: "ProcessKitTests-\(UUID().uuidString)", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     // The real path (/private/var/…), as `pwd -P` gives it.
-    return URL(fileURLWithPath: realpath(url.path, nil).map { defer { free($0) }; return String(cString: $0) } ?? url.path, isDirectory: true)
+    guard let real = realpath(url.path, nil) else { return url }
+    let path = String(cString: real)
+    free(real)
+    return URL(fileURLWithPath: path, isDirectory: true)
 }
 
 /// Whether a process with this id is still there.
