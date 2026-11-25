@@ -30,9 +30,11 @@ import Testing
     // MARK: Output of a cancelled run
 
     @Test func aCancelledRunCanReturnItsOutput() async throws {
-        let options = Shell.Options(returnsOutputWhenCancelled: true)
+        // Cancel only once the line is out, however slow the machine.
+        let begun = OSAllocatedUnfairLockBox(false)
+        let options = Shell.Options(onLine: { _ in begun.set(true) }, returnsOutputWhenCancelled: true)
         let task = Task { try await Shell.run("/bin/sh", ["-c", "echo begun; sleep 30"], options: options) }
-        try await Task.sleep(for: .milliseconds(300))
+        #expect(await eventually { begun.get() })
         task.cancel()
         let output = try await task.value
         #expect(output.cancelled)
