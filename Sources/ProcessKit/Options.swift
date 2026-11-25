@@ -20,6 +20,10 @@ extension Shell {
         public var gracePeriod: Duration
         /// The most stdout bytes kept. Past it, the command is stopped and the output is marked `truncated`.
         public var outputLimit: Int?
+        /// Keeps only the last this many bytes of stdout and of stderr, without stopping the command: for a
+        /// program that runs for hours (a game, an emulator, a server) whose output is read with `onLine`
+        /// and only the end of which is wanted in a report.
+        public var keepsLast: Int?
         /// A way to stop the command from code that has no task to cancel (`runSync`).
         public var cancel: CancelFlag?
         /// Starts the command as its own responsible process, the way Terminal does: macOS then judges its
@@ -50,6 +54,7 @@ extension Shell {
             timeout: Duration? = nil,
             gracePeriod: Duration = .seconds(3),
             outputLimit: Int? = nil,
+            keepsLast: Int? = nil,
             cancel: CancelFlag? = nil,
             disclaimsResponsibility: Bool = false,
             onLine: (@Sendable (String) -> Void)? = nil,
@@ -66,6 +71,7 @@ extension Shell {
             self.timeout = timeout
             self.gracePeriod = gracePeriod
             self.outputLimit = outputLimit
+            self.keepsLast = keepsLast
             self.cancel = cancel
             self.disclaimsResponsibility = disclaimsResponsibility
             self.onLine = onLine

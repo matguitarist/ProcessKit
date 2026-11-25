@@ -172,12 +172,14 @@ struct Execution {
                 truncated = true
             } else {
                 stdout.append(chunk)
+                if let keep = options.keepsLast, stdout.count > keep { stdout = Data(stdout.suffix(keep)) }
             }
         }
 
         func handleStderr(_ chunk: Data) {
             stderr.append(chunk)
             if !keepsStdout, stderr.count > Self.stderrTail { stderr = stderr.suffix(Self.stderrTail) }
+            if let keep = options.keepsLast, stderr.count > keep { stderr = Data(stderr.suffix(keep)) }
         }
 
         /// Reads what's there now, a few chunks at most so a fast writer can't keep the loop here;

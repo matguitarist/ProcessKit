@@ -79,6 +79,7 @@ options.stderr = .merged              // .capture, .discard, .file(url), .merged
 options.timeout = .seconds(30)
 options.gracePeriod = .seconds(3)     // between SIGTERM and SIGKILL
 options.outputLimit = 8 << 20         // stdout past it: stopped, output.truncated, the first bytes kept
+options.keepsLast = 256 << 10         // or: never stopped, only the last bytes of stdout and stderr kept (games, emulators)
 options.cancel = flag                 // a Shell.CancelFlag, for code without a task to cancel
 options.disclaimsResponsibility = true
 options.onLine = { line in progress.read(line) }  // stdout lines as they come, on the command's thread
